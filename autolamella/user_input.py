@@ -137,6 +137,9 @@ def _add_missing_keys(dictionary):
     dictionary["lamella"]["overtilt_degrees"] = dictionary["lamella"].get(
         "overtilt_degrees", 0
     )
+    dictionary["lamella"]["n_realignments"] = dictionary["lamella"].get(
+        "n_realignments", 1
+    )
     dictionary["lamella"]["patterning_shape"] = dictionary["lamella"].get(
         "patterning_shape", "CleaningCrossSection"
     )
