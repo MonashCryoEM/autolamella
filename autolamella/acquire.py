@@ -204,7 +204,8 @@ def save_final_images(microscope, settings, lamella_number):
 
     output_dir = settings["save_directory"]
     fullfield_cam_settings = GrabFrameSettings(
-        reduced_area=Rectangle(0.1, 0.1, 1, 1),
+        # leave a small gap at the edge, so researcher can click to remove the reduced area when program finishes
+        reduced_area=Rectangle(0, 0, 0.97, 0.97),
         resolution=settings["fiducial"]["reduced_area_resolution"],
         dwell_time=settings["imaging"]["dwell_time"],
     )
