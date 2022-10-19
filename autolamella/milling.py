@@ -13,79 +13,6 @@ from autolamella.align import realign
 from autolamella.autoscript import reset_state
 
 
-def milling(
-        microscope,
-        settings,
-        stage_settings,
-        my_lamella,
-        pattern,  # "upper", "lower", "both"
-        filename_prefix="",
-        demo_mode=False,
-):
-    from autoscript_core.common import ApplicationServerException
-    from autoscript_sdb_microscope_client.structures import StagePosition
-
-    # Sanity-check pattern parameter
-    if pattern not in ("upper", "lower", "both"):
-        raise ValueError(f"Invalid pattern type:\n"
-                         f"Should be \"upper\", \"lower\" or \"both\", not \"{pattern}\"")
-
-    # Setup and realign to fiducial marker
-    setup_milling(microscope, settings, stage_settings, my_lamella)
-    tilt_in_radians = np.deg2rad(stage_settings["overtilt_degrees"])
-    if pattern == "upper":
-        microscope.specimen.stage.relative_move(StagePosition(t=-tilt_in_radians))
-    elif pattern == "lower":
-        microscope.specimen.stage.relative_move(StagePosition(t=+tilt_in_radians))
-
-    # Realign three times
-    for abc in "abc":
-        image_unaligned = grab_images(
-            microscope,
-            settings,
-            my_lamella,
-            prefix="IB_" + filename_prefix,
-            suffix=f"_0{abc}-unaligned",
-        )
-        realign(microscope, image_unaligned, my_lamella.fiducial_image)
-    # Save the refined position to prevent gradual stage-drift
-    my_lamella.fibsem_position.ion_beam.update_beam_shift()
-
-    # Save the newly aligned image for the next alignment stage
-    my_lamella.fiducial_image = grab_images(
-        microscope,
-        settings,
-        my_lamella,  # can remove
-        prefix="IB_" + filename_prefix,
-        suffix="_1-aligned",
-    )
-    # Create and mill patterns
-    if pattern == "upper" or pattern == "both":
-        _milling_coords(microscope, stage_settings, my_lamella, "upper")
-    if pattern == "lower" or pattern == "both":
-        _milling_coords(microscope, stage_settings, my_lamella, "lower")
-    # Create microexpansion joints (if applicable)
-    _microexpansion_coords(microscope, stage_settings, my_lamella)
-    if 'patterning_mode' in stage_settings:
-        microscope.patterning.mode = stage_settings['patterning_mode']
-    if not demo_mode:
-        microscope.imaging.set_active_view(2)  # the ion beam view
-        print("Milling pattern...")
-        try:
-            microscope.patterning.run()
-        except ApplicationServerException:
-            logging.error("ApplicationServerException: could not mill!")
-    microscope.patterning.clear_patterns()
-    grab_images(
-        microscope,
-        settings,
-        my_lamella,  # can remove
-        prefix="IB_" + filename_prefix,
-        suffix=f"_2-after-{pattern}-milling",
-    )
-    return microscope
-
-
 def _milling_coords(microscope, stage_settings, my_lamella, pattern):
     """Create milling pattern for lamella position."""
     # Sanity-check pattern parameter
@@ -188,7 +115,22 @@ def setup_milling(microscope, settings, stage_settings, my_lamella):
     microscope = reset_state(microscope, settings)
     my_lamella.fibsem_position.restore_state(microscope)
     microscope.beams.ion_beam.beam_current.value = stage_settings["milling_current"]
+    if 'patterning_mode' in stage_settings:
+        microscope.patterning.mode = stage_settings['patterning_mode']
     return microscope
+
+
+def run_milling(microscope, demo_mode=False):
+    if demo_mode:
+        print("Skipping milling, demo mode enabled")
+        return
+    else:
+        microscope.imaging.set_active_view(2)  # the ion beam view
+        print("Milling pattern...")
+        try:
+            microscope.patterning.run()
+        except ApplicationServerException:
+            logging.error("ApplicationServerException: could not mill!")
 
 
 def run_drift_corrected_milling(microscope, correction_interval,
@@ -230,17 +172,75 @@ def mill_single_stage(
         microscope, settings, stage_settings, stage_number, my_lamella, lamella_number
 ):
     """Run ion beam milling for a single milling stage in the protocol."""
+    from autoscript_core.common import ApplicationServerException
+    from autoscript_sdb_microscope_client.structures import StagePosition
+
     filename_prefix = f"lamella{lamella_number + 1}_stage{stage_number + 1}"
-    demo_mode = settings["demo_mode"]
-    milling(
+    setup_milling(microscope, settings, stage_settings, my_lamella)
+
+    # Realign to fiducial marker
+    for i in range(int(stage_settings.get("n_realignments", 3))):
+        image_unaligned = grab_images(
+            microscope,
+            settings,
+            my_lamella,
+            prefix="IB_" + filename_prefix,
+            suffix=f"_0-{str(i)}-unaligned",
+            allow_fullfield_images=False,
+        )
+        realign(microscope, image_unaligned, my_lamella.fiducial_image)
+    # Save the refined position to prevent gradual stage-drift
+    my_lamella.fibsem_position.ion_beam.update_beam_shift()
+    # Save the newly aligned image for the next alignment stage
+    my_lamella.fiducial_image = grab_images(
         microscope,
         settings,
-        stage_settings,
         my_lamella,
-        pattern="both",
-        filename_prefix=filename_prefix,
-        demo_mode=demo_mode,
+        prefix="IB_" + filename_prefix,
+        suffix="_1-aligned",
     )
+
+    # Create microexpansion joints (if applicable)
+    _microexpansion_coords(microscope, stage_settings, my_lamella)
+    # Check for overtilt
+    overtilt = False
+    if np.abs(stage_settings["overtilt_degrees"]) > 0:
+        overtilt = True
+        tilt_in_radians = np.deg2rad(stage_settings["overtilt_degrees"])
+    if overtilt is True:
+        microscope.specimen.stage.relative_move(StagePosition(t=-tilt_in_radians))
+    # Upper milling pattern
+    _milling_coords(microscope, stage_settings, my_lamella, "upper")
+    # if overtilt enabled mill now, otherwise leave all milling to the end
+    if overtilt is True:
+        run_milling(microscope, demo_mode=settings["demo_mode"])
+        microscope.patterning.clear_patterns()
+        # Save images
+        grab_images(
+            microscope,
+            settings,
+            my_lamella,
+            prefix="IB_" + filename_prefix,
+            suffix=f"_2-after-upper-milling",
+        )
+        # Setup overtilt for lower milling pattern
+        microscope.specimen.stage.relative_move(StagePosition(t=+tilt_in_radians*2))
+    # Lower milling pattern
+    _milling_coords(microscope, stage_settings, my_lamella, "lower")
+    # Mill all patterns
+    run_milling(microscope, demo_mode=settings["demo_mode"])
+    microscope.patterning.clear_patterns()
+    if overtilt is True:
+        microscope.specimen.stage.relative_move(StagePosition(t=-tilt_in_radians))
+    # Save images
+    grab_images(
+        microscope,
+        settings,
+        my_lamella,
+        prefix="IB_" + filename_prefix,
+        suffix=f"_2-after-lower-milling",
+    )
+    # Milling single stage complete
 
 
 def mill_all_stages(

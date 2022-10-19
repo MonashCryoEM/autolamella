@@ -180,6 +180,8 @@ def add_single_sample(microscope, settings):
         print("Ok, deleting those milling patterns.")
         microscope.patterning.clear_patterns()
         return  # returns None, which gets stripped from sample list later
+    # Return ion beam current to imaging current
+    microscope.beams.ion_beam.beam_current.value = settings["imaging"]["ion_imaging_current"]
     # Continue on
     camera_settings = GrabFrameSettings(
         reduced_area=reduced_area_fiducial,

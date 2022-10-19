@@ -103,7 +103,8 @@ def grab_sem_image(microscope, camera_settings):
     return sem_image
 
 
-def grab_images(microscope, settings, my_lamella, prefix="", suffix=""):
+def grab_images(microscope, settings, my_lamella, prefix="", 
+                suffix="", allow_fullfield_images=True):
     """Aquire and save images, with optional autocontrast.
 
     Parameters
@@ -116,6 +117,9 @@ def grab_images(microscope, settings, my_lamella, prefix="", suffix=""):
         Prefix to use when saving image files, by default ""
     suffix : str, optional
         Suffix to use when saving image files, by default ""
+    allow_fullfield_images : bool, optional
+        If False, no full field images will be taken,
+        regardless of the settings in the config file.
 
     Returns
     -------
@@ -145,12 +149,13 @@ def grab_images(microscope, settings, my_lamella, prefix="", suffix=""):
     filename = os.path.join(output_dir, prefix + "_" + suffix + ".tif")
     image.save(filename)
     # Optional full field images
-    acquire_many_images = settings["imaging"]["full_field_ib_images"]
-    if acquire_many_images:
-        fullfield_image = grab_ion_image(microscope, fullfield_cam_settings)
-        fname_fullfield = prefix + "_FullField_" + suffix + ".tif"
-        filename_fullfield = os.path.join(output_dir, fname_fullfield)
-        fullfield_image.save(filename_fullfield)
+    if allow_fullfield_images is True:
+        acquire_many_images = settings["imaging"]["full_field_ib_images"]
+        if acquire_many_images:
+            fullfield_image = grab_ion_image(microscope, fullfield_cam_settings)
+            fname_fullfield = prefix + "_FullField_" + suffix + ".tif"
+            filename_fullfield = os.path.join(output_dir, fname_fullfield)
+            fullfield_image.save(filename_fullfield)
     return image
 
 
@@ -199,7 +204,8 @@ def save_final_images(microscope, settings, lamella_number):
 
     output_dir = settings["save_directory"]
     fullfield_cam_settings = GrabFrameSettings(
-        reduced_area=Rectangle(0, 0, 1, 1),
+        # leave a small gap at the edge, so researcher can click to remove the reduced area when program finishes
+        reduced_area=Rectangle(0, 0, 0.97, 0.97),
         resolution=settings["fiducial"]["reduced_area_resolution"],
         dwell_time=settings["imaging"]["dwell_time"],
     )
@@ -208,7 +214,7 @@ def save_final_images(microscope, settings, lamella_number):
         microscope.auto_functions.run_auto_cb()
     if settings["imaging"]["full_field_ib_images"]:
         original_ion_current = microscope.beams.ion_beam.beam_current.value
-        microscope.beams.ion_beam.beam_current.value = 20e-12  # ion imaging
+        microscope.beams.ion_beam.beam_current.value = settings["imaging"]["ion_imaging_current"]
         image = grab_ion_image(microscope, fullfield_cam_settings)
         filename = os.path.join(
             output_dir, "IB_lamella{}-milling-complete.tif".format(
